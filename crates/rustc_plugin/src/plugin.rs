@@ -5,6 +5,9 @@ use serde::{Serialize, de::DeserializeOwned};
 
 /// Specification of a set of crates.
 pub enum CrateFilter {
+  /// A crate and all transitive dependencies. 
+  CrateAndDeps,
+
   /// Every crate in the workspace and all transitive dependencies.
   AllCrates,
 

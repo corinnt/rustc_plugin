@@ -75,7 +75,7 @@ use std::{
     let prior_rustflags = prior_rustflags().unwrap();
     cmd
       .env(
-        if matches!(args.filter, CrateFilter::AllCrates) {
+        if matches!(args.filter, CrateFilter::AllCrates | CrateFilter::CrateAndDeps) {
           "RUSTC_WRAPPER"
         } else {
           "RUSTC_WORKSPACE_WRAPPER"
@@ -105,6 +105,9 @@ use std::{
       .collect::<Vec<_>>();
   
     match args.filter {
+      CrateFilter::CrateAndDeps => {
+        cmd.env(RUN_ON_ALL_CRATES, "");
+      }
       CrateFilter::CrateContainingFile(file_path) => {
         only_run_on_file(&mut cmd, file_path, &workspace_members, &target_dir);
       }
@@ -114,6 +117,7 @@ use std::{
           CrateFilter::AllCrates => {
             cmd.env(RUN_ON_ALL_CRATES, "");
           }
+          CrateFilter::CrateAndDeps => {}
           CrateFilter::OnlyWorkspace => {}
           CrateFilter::CrateContainingFile(_) => unreachable!(),
         }
