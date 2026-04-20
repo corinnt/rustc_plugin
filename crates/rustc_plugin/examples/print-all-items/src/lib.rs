@@ -6,9 +6,10 @@ extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_interface;
 extern crate rustc_middle;
+extern crate rustc_public;
 extern crate rustc_session;
 
-use std::{borrow::Cow, env, process::Command};
+use std::{borrow::Cow, env, ops::ControlFlow, process::Command};
 
 use clap::Parser;
 use rustc_hir::{
@@ -59,42 +60,15 @@ impl RustcPlugin for PrintAllItemsPlugin {
     cargo.args(&args.cargo_args);
   }
 
-  // In the driver, we use the Rustc API to start a compiler session
-  // for the arguments given to us by rustc_plugin.
+  // The driver invokes this via rustc_public::run_with_tcx!, providing
+  // the TyCtxt directly. We just perform our analysis here.
   fn run(
     self,
-    compiler_args: Vec<String>,
     plugin_args: Self::Args,
-  ) -> rustc_interface::interface::Result<()> {
-    let mut callbacks = PrintAllItemsCallbacks {
-      args: Some(plugin_args),
-    };
-    rustc_driver::run_compiler(&compiler_args, &mut callbacks);
-    Ok(())
-  }
-}
-
-struct PrintAllItemsCallbacks {
-  args: Option<PrintAllItemsPluginArgs>,
-}
-
-impl rustc_driver::Callbacks for PrintAllItemsCallbacks {
-  // At the top-level, the Rustc API uses an event-based interface for
-  // accessing the compiler at different stages of compilation. In this callback,
-  // all the type-checking has completed.
-  fn after_analysis(
-    &mut self,
-    _compiler: &rustc_interface::interface::Compiler,
     tcx: TyCtxt<'_>,
-  ) -> rustc_driver::Compilation {
-    // We call our top-level function with access to the type context `tcx` and the CLI arguments.
-    print_all_items(tcx, self.args.take().unwrap());
-
-    // Note that you should generally allow compilation to continue. If
-    // your plugin is being invoked on a dependency, then you need to ensure
-    // the dependency is type-checked (its .rmeta file is emitted into target/)
-    // so that its dependents can read the compiler outputs.
-    rustc_driver::Compilation::Continue
+  ) -> ControlFlow<()> {
+    print_all_items(tcx, plugin_args);
+    ControlFlow::Continue(())
   }
 }
 

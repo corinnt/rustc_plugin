@@ -7,6 +7,8 @@
 
 extern crate rustc_driver;
 extern crate rustc_interface;
+extern crate rustc_middle;
+extern crate rustc_public;
 extern crate rustc_session;
 
 #[doc(hidden)]

@@ -108,16 +108,20 @@ pub fn driver_main<T: RustcPlugin>(plugin: T) {
 
     let (have_sys_root_arg, sys_root) = get_sysroot(&orig_args);
 
-    if orig_args.iter().any(|a| a == "--version" || a == "-V") {
-      let version_info = rustc_tools_util::get_version_info!();
-      println!("{version_info}");
-      exit(0);
-    }
-
     // Setting RUSTC_WRAPPER causes Cargo to pass 'rustc' as the first argument.
     // We're invoking the compiler programmatically, so we ignore this
     let wrapper_mode =
       orig_args.get(1).map(Path::new).and_then(Path::file_stem) == Some("rustc".as_ref());
+
+    // When invoked directly (not as a wrapper), respond to --version/-V with the
+    // plugin's own version. In wrapper mode, some build scripts (e.g. libc's) probe
+    // RUSTC_WRAPPER with --version and expect rustc's version string — fall through
+    // so the real rustc at orig_args[1] handles it.
+    if !wrapper_mode && orig_args.iter().any(|a| a == "--version" || a == "-V") {
+      let version_info = rustc_tools_util::get_version_info!();
+      println!("{version_info}");
+      exit(0);
+    }
 
     if wrapper_mode {
       // we still want to be able to invoke it normally though
@@ -134,10 +138,14 @@ pub fn driver_main<T: RustcPlugin>(plugin: T) {
     // On a given invocation of rustc, we have to decide whether to act as rustc,
     // or actually execute the plugin. There are two conditions for executing the plugin:
     // 1. Either we're supposed to run on all crates, or CARGO_PRIMARY_PACKAGE is set.
-    // 2. --print is NOT passed, since Cargo does that to get info about rustc.
+    // 2. We are NOT in a "normal rustc" probe invocation. Cargo sends several kinds
+    //    of probe queries (--print, -vV) that must be forwarded to rustc directly,
+    //    because run_with_tcx! requires a full compilation that produces a TyCtxt.
     let primary_package = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     let run_on_all_crates = env::var(RUN_ON_ALL_CRATES).is_ok();
-    let normal_rustc = arg_value(&args, "--print", |_| true).is_some();
+    let is_version_probe = args.iter().any(|a| a == "-vV" || a == "--version" || a == "-V");
+    let is_print_query = arg_value(&args, "--print", |_| true).is_some();
+    let normal_rustc = is_version_probe || is_print_query;
     let is_target_crate = is_target_crate(&args);
     let run_plugin =
       !normal_rustc && (run_on_all_crates || primary_package) && is_target_crate;
@@ -146,7 +154,13 @@ pub fn driver_main<T: RustcPlugin>(plugin: T) {
       log::debug!("Running plugin...");
       let plugin_args: T::Args =
         serde_json::from_str(&env::var(PLUGIN_ARGS).unwrap()).unwrap();
-      plugin.run(args, plugin_args).unwrap();
+      plugin.modify_compiler_args(&mut args, &plugin_args);
+      let res = rustc_public::run_with_tcx!(&args, |tcx| {
+        plugin.run(plugin_args, tcx)
+      });
+      if res.is_err() {
+        exit(1);
+      }
     } else {
       log::debug!(
         "Running normal Rust. Relevant variables:\

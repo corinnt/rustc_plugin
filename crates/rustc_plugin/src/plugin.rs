@@ -1,6 +1,7 @@
-use std::{borrow::Cow, path::PathBuf, process::Command};
+use std::{borrow::Cow, ops::ControlFlow, path::PathBuf, process::Command};
 
 use cargo_metadata::camino::Utf8Path;
+use rustc_middle::ty::TyCtxt;
 use serde::{Serialize, de::DeserializeOwned};
 
 /// Specification of a set of crates.
@@ -28,9 +29,9 @@ pub struct RustcPluginArgs<Args> {
 }
 
 /// Interface between your plugin and the rustc_plugin framework.
-pub trait RustcPlugin: Sized {
+pub trait RustcPlugin: Sized + Send {
   /// Command-line arguments passed by the user.
-  type Args: Serialize + DeserializeOwned;
+  type Args: Serialize + DeserializeOwned + Send;
 
   /// Returns the version of your plugin.
   ///
@@ -53,12 +54,26 @@ pub trait RustcPlugin: Sized {
   /// For example, you could pass a `--feature` flag here.
   fn modify_cargo(&self, _cargo: &mut Command, _args: &Self::Args) {}
 
-  /// Executes the plugin with a set of compiler and plugin args.
+  /// Optionally modify the compiler args passed to `rustc_public::run_with_tcx!`.
+  /// For example, you could pass `-Zalways-encode-mir` or
+  /// `-Zcrate-attr=register_tool(my_tool)` here.
+  ///
+  /// This is called in the driver process (once per crate), after plugin args
+  /// have been deserialized but before the compiler is invoked.
+  fn modify_compiler_args(&self, _args: &mut Vec<String>, _plugin_args: &Self::Args) {}
+
+  /// Executes the plugin analysis with the compiler's TyCtxt.
+  ///
+  /// Called by the driver via `rustc_public::run_with_tcx!`. The framework
+  /// handles compiler invocation; plugins only need to implement the analysis.
+  ///
+  /// Returns `ControlFlow::Break(())` to signal an error, or
+  /// `ControlFlow::Continue(())` on success.
   fn run(
     self,
-    compiler_args: Vec<String>,
     plugin_args: Self::Args,
-  ) -> rustc_interface::interface::Result<()>;
+    tcx: TyCtxt<'_>,
+  ) -> ControlFlow<()>;
 }
 
 /// The name of the environment variable shared between the CLI and the driver.
